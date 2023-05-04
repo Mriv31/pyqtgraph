@@ -41,6 +41,9 @@ class PlotDataset(object):
         self.y = y
         self._dataRect = None
         self.containsNonfinite = None
+        self.xArrayLinSorted = 0
+        self.xIncrement = None
+        self.xOrigin = None
 
     def _updateDataRect(self):
         """
@@ -118,7 +121,18 @@ class PlotDataset(object):
             else:
                 all_y_finite = True
         if all_x_finite and all_y_finite:
+
             self.containsNonfinite = False # mark as False only if both axes were checked.
+
+    def copyInheritedProperties(self,dataset):
+        self.containsNonfinite = dataset.containsNonfinite
+        self.xArrayLinSorted = dataset.xArrayLinSorted
+        self.xIncrement = dataset.xIncrement
+        self.xOrigin = dataset.xOrigin
+
+
+    def setXarrayType(sorted):
+        self.setX
 
 class PlotDataItem(GraphicsObject):
     """
@@ -690,6 +704,8 @@ class PlotDataItem(GraphicsObject):
                 DeprecationWarning, stacklevel=2
             )
         profiler = debug.Profiler()
+        xArrayLinSorted = 0
+
         y = None
         x = None
         if len(args) == 1:
@@ -775,6 +791,9 @@ class PlotDataItem(GraphicsObject):
         if 'brush' in kargs:
             kargs['fillBrush'] = kargs['brush']
 
+        if 'xArrayLinSorted' in kargs:
+            xArrayLinSorted = kargs['xArrayLinSorted']
+
         for k in list(self.opts.keys()):
             if k in kargs:
                 self.opts[k] = kargs[k]
@@ -799,6 +818,7 @@ class PlotDataItem(GraphicsObject):
             yData = y.view(np.ndarray)
             if x is None:
                 x = np.arange(len(y))
+                xArrayLinSorted = 1
 
         if x is None or len(x)==0: # empty data is represented as None
             xData = None
@@ -811,12 +831,17 @@ class PlotDataItem(GraphicsObject):
             self._dataset = None
         else:
             self._dataset = PlotDataset( xData, yData )
+            if (xArrayLinSorted):
+                self._dataset.xArrayLinSorted = 1
+                self._dataset.xIncrement = xData[1]-xData[0]
+                self._dataset.xOrigin = xData[0]
+
         self._datasetMapped  = None  # invalidata mapped data , will be generated in getData() / _getDisplayDataset()
         self._datasetDisplay = None  # invalidate display data, will be generated in getData() / _getDisplayDataset()
 
         profiler('set data')
 
-        self.updateItems( styleUpdate = self.property('styleWasChanged') )
+        #self.updateItems( styleUpdate = self.property('styleWasChanged') )
         self.setProperty('styleWasChanged', False) # items have been updated
         profiler('update items')
 
@@ -861,7 +886,7 @@ class PlotDataItem(GraphicsObject):
             ]:
                 if k in self.opts:
                     scatterArgs[v] = self.opts[k]
-
+        print("updateItems")
         dataset = self._getDisplayDataset()
         if dataset is None: # then we have nothing to show
             self.curve.hide()
@@ -951,7 +976,7 @@ class PlotDataItem(GraphicsObject):
                 y = np.diff(self._dataset.y)/np.diff(self._dataset.x)
 
             dataset = PlotDataset(x,y)
-            dataset.containsNonfinite = self._dataset.containsNonfinite
+            dataset.copyInheritedProperties(self._dataset)
 
             if True in self.opts['logMode']:
                 dataset.applyLogMapping( self.opts['logMode'] ) # Apply log scaling for x and/or y axis
@@ -991,27 +1016,36 @@ class PlotDataItem(GraphicsObject):
                         if math.isfinite(ds_float):
                             ds = int(ds_float)
                         if ds>3:
-                            ds = np.exp(np.int(np.log(ds)))  #only allows value of ds which are logarithmic spaced to avoid looping
+                            ds = int(np.exp(int(np.log(ds))))  #only allows value of ds which are logarithmic spaced to avoid looping
 
-
+        print("ds= ",ds)
                     ## downsampling is expensive; delay until after clipping.
 
         if self.opts['clipToView']:
             if view is None or view.autoRangeEnabled()[0]:
                 pass # no ViewBox to clip to, or view will autoscale to data range.
             else:
-                # clip-to-view always presumes that x-values are in increasing order
+                                # clip-to-view always presumes that x-values are in increasing order
                 if view_range is not None and len(x) > 1:
                     # find first in-view value (left edge) and first out-of-view value (right edge)
                     # since we want the curve to go to the edge of the screen, we need to preserve
                     # one down-sampled point on the left and one of the right, so we extend the interval
-                    x0 = np.searchsorted(x, view_range.left()) - ds
-                    x0 = fn.clip_scalar(x0, 0, len(x)) # workaround
-                    # x0 = np.clip(x0, 0, len(x))
+                    if (self._datasetMapped.xArrayLinSorted == True):
+                        x0 = (view_range.left() - self._datasetMapped.xOrigin)/self._datasetMapped.xIncrement
+                        x0 = int(x0) - ds
+                        x0 = max(0,x0)
 
-                    x1 = np.searchsorted(x, view_range.right()) + ds
-                    x1 = fn.clip_scalar(x1, x0, len(x))
-                    # x1 = np.clip(x1, 0, len(x))
+                        x1 = (view_range.right() - self._datasetMapped.xOrigin)/self._datasetMapped.xIncrement
+                        x1 = int(x1) + ds
+
+                    else:
+                        x0 = np.searchsorted(x, view_range.left()) - ds
+                        x0 = fn.clip_scalar(x0, 0, len(x)) # workaround
+                        # x0 = np.clip(x0, 0, len(x))
+
+                        x1 = np.searchsorted(x, view_range.right()) + ds
+                        x1 = fn.clip_scalar(x1, x0, len(x))
+                        # x1 = np.clip(x1, 0, len(x))
                     x = x[x0:x1]
                     y = y[x0:x1]
 
@@ -1072,7 +1106,7 @@ class PlotDataItem(GraphicsObject):
                             y = fn.clip_array(y, min_val, max_val)
                             self._drlLastClip = (min_val, max_val)
         self._datasetDisplay = PlotDataset( x,y )
-        self._datasetDisplay.containsNonfinite = containsNonfinite
+        self._datasetDisplay.copyInheritedProperties(self._dataset)
         self.setProperty('xViewRangeWasChanged', False)
         self.setProperty('yViewRangeWasChanged', False)
 
@@ -1082,6 +1116,7 @@ class PlotDataItem(GraphicsObject):
         """
         Returns the displayed data as the tuple (`xData`, `yData`) after mapping and data reduction.
         """
+        print("getData")
         dataset = self._getDisplayDataset()
         if dataset is None:
             return (None, None)
@@ -1169,6 +1204,7 @@ class PlotDataItem(GraphicsObject):
     def viewRangeChanged(self, vb=None, ranges=None, changed=None):
         # view range has changed; re-plot if needed
         update_needed = False
+        print("viewRangeChanged")
         if changed is None or changed[0]:
             # if ranges is not None:
             #     print('hor:', ranges[0])
